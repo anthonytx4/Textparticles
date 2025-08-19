@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Touch Particles — iPad Optimized</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/icon-180.png">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+    }
+  </script>
+  <style>
+    :root{
+      --panel-bg: rgba(18, 18, 20, 0.6);
+      --panel-border: rgba(255,255,255,0.1);
+      --text: #f5f7ff;
+      --muted: #cbd1e6;
+      --accent: #8ab4ff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(1200px 800px at 20% 10%, #0f1730, #0a0e1a 60%, #070a12 100%);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+    }
+    canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
+    .hud {
+      position: fixed;
+      left: max(12px, env(safe-area-inset-left));
+      right: max(12px, env(safe-area-inset-right));
+      bottom: max(12px, env(safe-area-inset-bottom));
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      padding: 12px 14px; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 16px;
+      backdrop-filter: blur(10px) saturate(120%); -webkit-backdrop-filter: blur(10px) saturate(120%);
+    }
+    .group { display: grid; grid-template-columns: auto 1fr auto; gap: 8px 10px; min-width: 260px; flex: 1 1 320px; align-items: center; }
+    label { font-size: 14px; color: var(--muted); white-space: nowrap; }
+    output { font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; color: var(--accent); font-weight: 600; }
+    input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 32px; background: transparent; cursor: pointer; touch-action: pan-y; }
+    input[type="range"]::-webkit-slider-runnable-track,
+    input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: linear-gradient(90deg, rgba(255,255,255,0.2), rgba(255,255,255,0.05)); }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; margin-top: -11px; width: 28px; height: 28px; border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #ffffff, #dfe8ff); border: 1px solid rgba(0,0,0,0.2); box-shadow: 0 6px 14px rgba(0,0,0,0.25), 0 0 0 4px rgba(138,180,255,0.25); }
+    input[type="range"]::-moz-range-thumb { width: 28px; height: 28px; border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, #ffffff, #dfe8ff); border: 1px solid rgba(0,0,0,0.2); box-shadow: 0 6px 14px rgba(0,0,0,0.25), 0 0 0 4px rgba(138,180,255,0.25); }
+    .title {
+      position: fixed; top: max(14px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left));
+      padding: 10px 12px; font-size: 14px; line-height: 1.2; color: var(--muted);
+      background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 12px;
+      backdrop-filter: blur(10px) saturate(120%); -webkit-backdrop-filter: blur(10px) saturate(120%); pointer-events: none;
+    }
+    .title b { color: #fff; } .stat { font-variant-numeric: tabular-nums; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <canvas id="c" aria-label="Interactive particle field"></canvas>
+
+  <div class="title">
+    <b>Touch Particles</b><br/>
+    Tap, press, or drag to push particles ✨
+    <div class="stat" id="fpsStat" aria-live="polite"></div>
+  </div>
+
+  <div class="hud" role="group" aria-label="Particle settings">
+    <div class="group">
+      <label for="count">Particles</label>
+      <input id="count" type="range" min="100" max="3000" step="50" value="800" />
+      <output id="countOut">800</output>
+    </div>
+    <div class="group">
+      <label for="strength">Reaction Strength</label>
+      <input id="strength" type="range" min="0" max="2" step="0.01" value="0.85" />
+      <output id="strengthOut">0.85</output>
+    </div>
+  </div>
+
+  <script>
+  (() => {
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+
+    const countEl = document.getElementById('count');
+    const countOut = document.getElementById('countOut');
+    const strengthEl = document.getElementById('strength');
+    const strengthOut = document.getElementById('strengthOut');
+    const fpsStat = document.getElementById('fpsStat');
+
+    const config = {
+      count: +localStorage.getItem('tp_count') || +countEl.value,
+      strength: +localStorage.getItem('tp_strength') || +strengthEl.value,
+      maxSpeed: 1.6,     // px/ms
+      damping: 0.985,
+      radius: 2.0,
+      repelFalloff: 120,
+    };
+    countEl.value = config.count; countOut.textContent = config.count;
+    strengthEl.value = config.strength; strengthOut.textContent = config.strength.toFixed(2);
+
+    let widthCSS = 0, heightCSS = 0, dpr = 1;
+    function resize() {
+      const w = window.innerWidth, h = window.innerHeight;
+      widthCSS = w; heightCSS = h; dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+      ctx.setTransform(1,0,0,1,0,0); ctx.scale(dpr, dpr);
+      ctx.fillStyle = '#070a12'; ctx.fillRect(0, 0, widthCSS, heightCSS);
+    }
+    resize(); addEventListener('resize', resize, { passive: true });
+
+    class Particle {
+      constructor(){ this.reset(); }
+      reset(){
+        this.x = Math.random() * widthCSS; this.y = Math.random() * heightCSS;
+        const a = Math.random() * Math.PI * 2, s = Math.random() * 0.4 + 0.05;
+        this.vx = Math.cos(a) * s; this.vy = Math.sin(a) * s;
+      }
+      step(dt, touches){
+        for (const t of touches){
+          const dx = this.x - t.x, dy = this.y - t.y;
+          const dist2 = dx*dx + dy*dy + config.repelFalloff;
+          const inv = 1 / Math.sqrt(dist2);
+          const fx = dx * inv, fy = dy * inv;
+          const force = config.strength / dist2 * 14000;
+          this.vx += fx * force * dt; this.vy += fy * force * dt;
+        }
+        this.vx *= config.damping; this.vy *= config.damping;
+        const sp = Math.hypot(this.vx, this.vy), max = config.maxSpeed;
+        if (sp > max){ const s = max / sp; this.vx *= s; this.vy *= s; }
+        this.x += this.vx * dt * 1000; this.y += this.vy * dt * 1000;
+        if (this.x < -8) this.x = widthCSS + 8; else if (this.x > widthCSS + 8) this.x = -8;
+        if (this.y < -8) this.y = heightCSS + 8; else if (this.y > heightCSS + 8) this.y = -8;
+      }
+      draw(ctx){ ctx.beginPath(); ctx.arc(this.x, this.y, config.radius, 0, Math.PI*2); ctx.fill(); }
+    }
+
+    let particles = [];
+    function rebuildCount(n){
+      n = Math.max(0, Math.min(3000, Math.floor(n)));
+      if (n > particles.length) { for (let i = particles.length; i < n; i++) particles.push(new Particle()); }
+      else if (n < particles.length) { particles.length = n; }
+      countOut.textContent = n; localStorage.setItem('tp_count', String(n));
+    }
+    rebuildCount(config.count);
+
+    const active = new Map();
+    function pt(e){ const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+    canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); active.set(e.pointerId, pt(e)); });
+    canvas.addEventListener('pointermove', e => { if (active.has(e.pointerId)) active.set(e.pointerId, pt(e)); });
+    function end(e){ active.delete(e.pointerId); }
+    canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end); canvas.addEventListener('pointerleave', end);
+
+    countEl.addEventListener('input', e => { config.count = +e.target.value; rebuildCount(config.count); }, { passive: true });
+    strengthEl.addEventListener('input', e => { const v = +e.target.value; config.strength = v; strengthOut.textContent = v.toFixed(2); localStorage.setItem('tp_strength', String(v)); }, { passive: true });
+
+    let last = performance.now(), acc=0, frames=0, lastFPS=last;
+    function frame(now){
+      const dt = Math.min(0.032, (now - last) / 1000); last = now;
+      ctx.fillStyle = '#070a12'; ctx.fillRect(0,0,widthCSS,heightCSS);
+      ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = 'rgba(138,180,255,0.85)';
+      const touches = [...active.values()];
+      for (let i=0;i<particles.length;i++){ const p=particles[i]; p.step(dt, touches); p.draw(ctx); }
+      ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      for (let i=0;i<Math.min(40, particles.length/20); i++){ const j=(i*97)%particles.length, q=particles[j]; ctx.beginPath(); ctx.arc(q.x,q.y,0.7,0,Math.PI*2); ctx.fill(); }
+      acc += 1/dt; frames++; if (now - lastFPS > 250){ fpsStat.textContent = `FPS: ${(acc/frames)|0}`; acc=0; frames=0; lastFPS=now; }
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>
